@@ -1,0 +1,98 @@
+{{- if .Values.canary.create }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "app.fullname" . }}-canary
+  labels:
+    app.kubernetes.io/name: {{ include "app.name" . }}
+    app.kubernetes.io/version: "{{ .Values.canary.image.tag }}"
+    app.kubernetes.io/managed-by: helm
+    app: {{ include "app.name" . }}
+    version: "{{ .Values.canary.image.tag }}"
+    track: "canary"
+spec:
+  replicas: {{ .Values.canary.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "app.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      track: "canary"
+  minReadySeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "app.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app: {{ include "app.name" . }}
+        version: "{{ .Values.canary.image.tag }}"
+        {{- if .Values.azureManagedIdentity }}
+        aadpodidbinding: {{ include "app.name" . }}
+        {{- end }}
+        track: "canary"
+    spec:
+      serviceAccountName: {{ include "app.fullname" . }}
+      automountServiceAccountToken: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.canary.image.repository }}:{{ .Values.canary.image.tag }}"
+          imagePullPolicy: {{ .Values.canary.image.pullPolicy }}
+          env:
+          {{- range $key, $value := .Values.environment }}
+          - name: {{ $key }}
+            value: {{ $value }}
+          {{- end }}
+          - name: KEY_VAULT_ENABLED
+            value: "{{ .Values.azureKeyVault.enabled }}"
+          - name: KEY_VAULT_URL
+            value: {{ .Values.azureKeyVault.host }}
+          envFrom:
+          - configMapRef:
+              name: {{ include "app.fullname" . }}
+          {{- if .Values.useExistingSecret }}
+          - secretRef:
+              name: {{ include "app.fullname" . }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: 40
+            timeoutSeconds: 2
+            periodSeconds: 5
+            failureThreshold: 5
+            successThreshold: 1
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: 60
+            timeoutSeconds: 2
+            periodSeconds: 8
+            failureThreshold: 1
+            successThreshold: 1
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+{{- end }}

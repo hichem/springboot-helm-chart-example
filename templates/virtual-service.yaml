@@ -1,0 +1,88 @@
+{{- if .Values.istio.enabled }}
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: {{ include "app.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  hosts:
+  - {{ include "app.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local                  # Calls to internal app host
+  {{- if .Values.istio.ingress.subdomain.create }}                                             # Calls to external app sub-domain
+  - {{ .Values.istio.ingress.subdomain.host }}
+  {{- end}}
+  {{- if .Values.istio.ingress.fanout.create }}                                                # Calls to external app sub-path
+  - {{ .Values.istio.ingress.fanout.host }}
+  {{- end}}
+  gateways:
+  - {{ .Values.istio.gateway }}
+  - mesh
+  http:
+  ## Fanout Route to App
+  {{- if .Values.istio.ingress.fanout.create }}
+  - match:
+    - uri:
+        prefix: {{ .Values.istio.ingress.fanout.baseUrl }}
+      gateways:
+        - {{ .Values.istio.gateway }}
+    route:
+    - destination:
+        port:
+          number: {{ .Values.service.port }}
+        host: {{ include "app.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+    {{- if .Values.canary.create }}
+        subset: stable
+      weight: {{ .Values.canary.stableWeight }}
+    - destination:
+        port:
+          number: {{ .Values.service.port }}
+        host: {{ include "app.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+        subset: canary
+      weight: {{ .Values.canary.canaryWeight }}
+    {{- end }}
+    rewrite:
+      uri: /
+  {{- end}}
+
+  ## Sub-Domain and Internal Routes to App
+  - match:
+    - gateways:
+      - mesh
+      {{- if .Values.istio.ingress.subdomain.create }} 
+      - {{ .Values.istio.gateway }}
+      {{- end }}
+    route:
+    - destination:
+        port:
+          number: {{ .Values.service.port }}
+        host: {{ include "app.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+    {{- if .Values.canary.create }}
+        subset: stable
+      weight: {{ .Values.canary.stableWeight }}
+    - destination:
+        port:
+          number: {{ .Values.service.port }}
+        host: {{ include "app.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+        subset: canary
+      weight: {{ .Values.canary.canaryWeight }}
+    {{- end }}
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: {{ include "app.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  host: {{ include "app.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: {{ .Values.istio.meshTlsPolicy }}
+  {{- if .Values.canary.create }}
+  subsets:
+  - name: stable
+    labels:
+      track: stable
+  - name: canary
+    labels:
+      track: canary
+  {{- end }}
+{{- end }}
